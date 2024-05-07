@@ -15,8 +15,13 @@ from relighting.argument import (
     CONTROLNET_MODELS,
     VAE_MODELS
 )
+from PIL import Image
+import skimage
+import ezexr
 import os
 from tqdm import tqdm
+import numpy as np
+
 CACHE_DIR = "./temp_inpaint_iterative"
 BALL_SIZE = 256
 BALL_DILATE = 20
@@ -31,6 +36,8 @@ EV = "0,-2.5,-5"
 DEVICE = "cuda:3"
 MAX_NEGATIVE_EV = -5
 STRENGHT = 0.8
+SCALE = 4
+GAMMA = 2.4
 mask_generator = MaskGenerator()
 
 model, controlnet = SD_MODELS["sdxl"], CONTROLNET_MODELS["sdxl"]
@@ -51,6 +58,38 @@ start_time = time.time()
 pipe.pipeline.unet = torch.compile(pipe.pipeline.unet, mode="reduce-overhead", fullgraph=True)
 print("Model compilation time: ", time.time() - start_time)
 
+class TonemapHDR(object):
+    """
+        Tonemap HDR image globally. First, we find alpha that maps the (max(numpy_img) * percentile) to max_mapping.
+        Then, we calculate I_out = alpha * I_in ^ (1/gamma)
+        input : nd.array batch of images : [H, W, C]
+        output : nd.array batch of images : [H, W, C]
+    """
+
+    def __init__(self, gamma=2.4, percentile=50, max_mapping=0.5):
+        self.gamma = gamma
+        self.percentile = percentile
+        self.max_mapping = max_mapping  # the value to which alpha will map the (max(numpy_img) * percentile) to
+
+    def __call__(self, numpy_img, clip=True, alpha=None, gamma=True):
+        if gamma:
+            power_numpy_img = np.power(numpy_img, 1 / self.gamma)
+        else:
+            power_numpy_img = numpy_img
+        non_zero = power_numpy_img > 0
+        if non_zero.any():
+            r_percentile = np.percentile(power_numpy_img[non_zero], self.percentile)
+        else:
+            r_percentile = np.percentile(power_numpy_img, self.percentile)
+        if alpha is None:
+            alpha = self.max_mapping / (r_percentile + 1e-10)
+        tonemapped_img = np.multiply(alpha, power_numpy_img)
+
+        if clip:
+            tonemapped_img_clip = np.clip(tonemapped_img, 0, 1)
+
+        return tonemapped_img_clip.astype('float32'), alpha, tonemapped_img
+    
 def get_ideal_normal_ball(size, flip_x=True):
     """
     Generate normal ball for specific size 
@@ -134,8 +173,123 @@ def interpolate_embedding(pipe):
 
     return dict(zip(ev_list, interpolate_embeds))
 
+def create_envmap_grid(size: int):
+    """
+    BLENDER CONVENSION
+    Create the grid of environment map that contain the position in sperical coordinate
+    Top left is (0,0) and bottom right is (pi/2, 2pi)
+    """    
+    
+    theta = torch.linspace(0, np.pi * 2, size * 2)
+    phi = torch.linspace(0, np.pi, size)
+    
+    #use indexing 'xy' torch match vision's homework 3
+    theta, phi = torch.meshgrid(theta, phi ,indexing='xy') 
+    
+    
+    theta_phi = torch.cat([theta[..., None], phi[..., None]], dim=-1)
+    theta_phi = theta_phi.numpy()
+    return theta_phi
 
+def get_normal_vector(incoming_vector: np.ndarray, reflect_vector: np.ndarray):
+    """
+    BLENDER CONVENSION
+    incoming_vector: the vector from the point to the camera
+    reflect_vector: the vector from the point to the light source
+    """
+    #N = 2(R ⋅ I)R - I
+    N = (incoming_vector + reflect_vector) / np.linalg.norm(incoming_vector + reflect_vector, axis=-1, keepdims=True)
+    return N
 
+def get_cartesian_from_spherical(theta: np.array, phi: np.array, r = 1.0):
+    """
+    BLENDER CONVENSION
+    theta: vertical angle
+    phi: horizontal angle
+    r: radius
+    """
+    x = r * np.sin(theta) * np.cos(phi)
+    y = r * np.sin(theta) * np.sin(phi)
+    z = r * np.cos(theta)
+    return np.concatenate([x[...,None],y[...,None],z[...,None]], axis=-1)
+
+def process_image(ball_img):
+    I = np.array([1,0, 0])
+    env_grid = create_envmap_grid(BALL_SIZE * SCALE)   
+    reflect_vec = get_cartesian_from_spherical(env_grid[...,1], env_grid[...,0])
+    normal = get_normal_vector(I[None,None], reflect_vec)
+    
+    pos = (normal + 1.0) / 2
+    pos  = 1.0 - pos
+    pos = pos[...,1:]
+    
+    env_map = None
+    
+    # using pytorch method for bilinear interpolation
+    with torch.no_grad():
+        # convert position to pytorch grid look up
+        grid = torch.from_numpy(pos)[None].float()
+        grid = grid * 2 - 1 # convert to range [-1,1]
+
+        # convert ball to support pytorch
+        ball_image = torch.from_numpy(ball_image[None]).float()
+        ball_image = ball_image.permute(0,3,1,2) # [1,3,H,W]
+        
+        env_map = torch.nn.functional.grid_sample(ball_image, grid, mode='bilinear', padding_mode='border', align_corners=True)
+        env_map = env_map[0].permute(1,2,0).numpy()
+                
+    env_map_default = skimage.transform.resize(env_map, (BALL_SIZE, BALL_SIZE*2), anti_aliasing=True)
+    return env_map_default
+
+def exposure2hdr(info, image):
+    scaler = np.array([0.212671, 0.715160, 0.072169])
+    name = info['name']
+    evs = [e for e in sorted(info['ev'], reverse = True)]
+
+    # filename
+    files = [info['ev'][e] for e in evs]
+    
+    # inital first image
+    # image0 = skimage.io.imread(os.path.join(args.input_dir, files[0]))[...,:3]
+    image0 = skimage.img_as_float(image)
+    image0_linear = np.power(image0, GAMMA)
+
+    # read luminace for every image 
+    luminances = []
+    for i in range(len(evs)):
+        # load image
+        # image = skimage.io.imread(path)[...,:3]
+        # image = skimage.img_as_float(image)
+        
+        # apply gama correction
+        linear_img = np.power(image, GAMMA)
+        
+        # convert the brighness
+        linear_img *= 1 / (2 ** evs[i])
+        
+        # compute luminace
+        lumi = linear_img @ scaler
+        luminances.append(lumi)
+        
+    # start from darkest image
+    out_luminace = luminances[len(evs) - 1]
+    for i in range(len(evs) - 1, 0, -1):
+        # compute mask
+        maxval = 1 / (2 ** evs[i-1])
+        p1 = np.clip((luminances[i-1] - 0.9 * maxval) / (0.1 * maxval), 0, 1)
+        p2 = out_luminace > luminances[i-1]
+        mask = (p1 * p2).astype(np.float32)
+        out_luminace = luminances[i-1] * (1-mask) + out_luminace * mask
+        
+    hdr_rgb = image0_linear * (out_luminace / (luminances[0] + 1e-10))[:, :, np.newaxis] 
+    hdr2ldr = TonemapHDR(gamma=GAMMA, percentile=99, max_mapping=0.9)
+    ldr_rgb, _, _ = hdr2ldr(hdr_rgb)
+    bracket = []
+    for s in 2 ** np.linspace(0, evs[-1], 10): #evs[-1] is -5
+        lumi = np.clip((s * hdr_rgb) ** (1/GAMMA), 0, 1)
+        bracket.append(lumi)
+    bracket = np.concatenate(bracket, axis=1)
+    return skimage.img_as_ubyte(bracket)
 
 def endpoint(image_data: dict, denoising_step: int, num_iter: int = 2, ball_per_iteration: int = 30, algorithm: str = "normal",):
     embedding_dict = interpolate_embedding(pipe)
@@ -191,3 +345,5 @@ def endpoint(image_data: dict, denoising_step: int, num_iter: int = 2, ball_per_
                 output_image = pipe.inpaint_iterative(**kwargs)
             else:
                 raise NotImplementedError(f"Unknown algorithm {algorithm}")
+            square_image = output_image.crop((x, y, x+r, y+r))
+            return square_image
