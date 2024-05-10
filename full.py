@@ -33,7 +33,7 @@ CONTROL_SCALE = 0.5
 GUIDANCE_SCALE = 5.0
 SEED = random.choice((0, 37, 71, 125, 140, 196, 307, 434, 485, 575, 9021, 9166, 9560, 9814))
 EV = "0,-2.5,-5"
-DEVICE = "cuda:3"
+DEVICE = "cuda"
 MAX_NEGATIVE_EV = -5
 STRENGHT = 0.8
 SCALE = 4
@@ -54,9 +54,9 @@ pipe.pipeline.fuse_lora(lora_scale=0.75) # fuse lora weight w' = w + \alpha \Del
 enabled_lora = True
 
 print("compiling unet model")
-start_time = time.time()
-pipe.pipeline.unet = torch.compile(pipe.pipeline.unet, mode="reduce-overhead", fullgraph=True)
-print("Model compilation time: ", time.time() - start_time)
+# start_time = time.time()
+# pipe.pipeline.unet = torch.compile(pipe.pipeline.unet, mode="reduce-overhead", fullgraph=True)
+# print("Model compilation time: ", time.time() - start_time)
 
 class TonemapHDR(object):
     """
@@ -224,15 +224,15 @@ def process_image(ball_img):
     pos = pos[...,1:]
     
     env_map = None
-    
+    ball_img = np.array(ball_img)
     # using pytorch method for bilinear interpolation
     with torch.no_grad():
         # convert position to pytorch grid look up
-        grid = torch.from_numpy(pos)[None].float()
+        grid = torch.from_numpy(pos).unsqueeze(0).float()
         grid = grid * 2 - 1 # convert to range [-1,1]
 
         # convert ball to support pytorch
-        ball_image = torch.from_numpy(ball_image[None]).float()
+        ball_image = torch.from_numpy(ball_img).unsqueeze(0).float() / 255.0
         ball_image = ball_image.permute(0,3,1,2) # [1,3,H,W]
         
         env_map = torch.nn.functional.grid_sample(ball_image, grid, mode='bilinear', padding_mode='border', align_corners=True)
@@ -241,18 +241,14 @@ def process_image(ball_img):
     env_map_default = skimage.transform.resize(env_map, (BALL_SIZE, BALL_SIZE*2), anti_aliasing=True)
     return env_map_default
 
-def exposure2hdr(info, image):
+def exposure2hdr(image):
     scaler = np.array([0.212671, 0.715160, 0.072169])
-    name = info['name']
-    evs = [e for e in sorted(info['ev'], reverse = True)]
+    ev = [float(i) for i in EV.split(",")]
+    evs = [e for e in sorted(ev, reverse = True)]
 
-    # filename
-    files = [info['ev'][e] for e in evs]
-    
-    # inital first image
     # image0 = skimage.io.imread(os.path.join(args.input_dir, files[0]))[...,:3]
-    image0 = skimage.img_as_float(image)
-    image0_linear = np.power(image0, GAMMA)
+    # image0 = skimage.img_as_float(image)
+    image0_linear = np.power(image, GAMMA)
 
     # read luminace for every image 
     luminances = []
@@ -282,16 +278,17 @@ def exposure2hdr(info, image):
         out_luminace = luminances[i-1] * (1-mask) + out_luminace * mask
         
     hdr_rgb = image0_linear * (out_luminace / (luminances[0] + 1e-10))[:, :, np.newaxis] 
-    hdr2ldr = TonemapHDR(gamma=GAMMA, percentile=99, max_mapping=0.9)
-    ldr_rgb, _, _ = hdr2ldr(hdr_rgb)
-    bracket = []
-    for s in 2 ** np.linspace(0, evs[-1], 10): #evs[-1] is -5
-        lumi = np.clip((s * hdr_rgb) ** (1/GAMMA), 0, 1)
-        bracket.append(lumi)
-    bracket = np.concatenate(bracket, axis=1)
-    return skimage.img_as_ubyte(bracket)
+    # hdr2ldr = TonemapHDR(gamma=GAMMA, percentile=99, max_mapping=0.9)
+    return hdr_rgb
+    # ldr_rgb, _, _ = hdr2ldr(hdr_rgb)
+    # bracket = []
+    # for s in 2 ** np.linspace(0, evs[-1], 10): #evs[-1] is -5
+    #     lumi = np.clip((s * hdr_rgb) ** (1/GAMMA), 0, 1)
+    #     bracket.append(lumi)
+    # bracket = np.concatenate(bracket, axis=1)
+    # return skimage.img_as_ubyte(bracket)
 
-def endpoint(image_data: dict, denoising_step: int, num_iter: int = 2, ball_per_iteration: int = 30, algorithm: str = "normal",):
+def endpoint(image_data: dict, denoising_step: int = 30, num_iter: int = 2, ball_per_iteration: int = 30, algorithm: str = "normal"):
     embedding_dict = interpolate_embedding(pipe)
     normal_ball, mask_ball = get_ideal_normal_ball(size=BALL_SIZE+BALL_DILATE)
 
@@ -306,7 +303,7 @@ def endpoint(image_data: dict, denoising_step: int, num_iter: int = 2, ball_per_
                 y - (BALL_DILATE // 2),
                 r + BALL_DILATE
             )
-            generator = torch.Generator().manual_seed(seed=SEED)
+            generator = torch.Generator().manual_seed(SEED)
             kwargs = {
                 "prompt_embeds": prompt_embeds,
                 "pooled_prompt_embeds": pooled_prompt_embeds,
@@ -346,4 +343,16 @@ def endpoint(image_data: dict, denoising_step: int, num_iter: int = 2, ball_per_
             else:
                 raise NotImplementedError(f"Unknown algorithm {algorithm}")
             square_image = output_image.crop((x, y, x+r, y+r))
-            return square_image
+            return img, square_image
+    
+
+if __name__ == "__main__":
+    img = Image.open("input/bed.png").resize(size = (1024, 1024), resample = Image.BICUBIC)
+    # array = np.asarray(img)
+    img_data = {
+        "img": img,
+        "name": "bed.png",
+    }
+    img, square = endpoint(img_data)
+    env_map_default = process_image(square)
+    hdr = exposure2hdr(env_map_default)
