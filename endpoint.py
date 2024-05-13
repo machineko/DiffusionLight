@@ -1,7 +1,7 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from typing import Optional
 import threading
-from full import endpoint, process_image, exposure2hdr
+from full import endpoint, process_image, exposure2hdr, cropped_ball
 from PIL import Image
 from io import BytesIO
 import uvicorn
@@ -11,6 +11,7 @@ import skimage
 import numpy as np
 import os
 import tempfile
+import torch
 
 app = FastAPI()
 
@@ -29,38 +30,58 @@ async def upload_image(image: UploadFile = File(...), image_name: Optional[str] 
                 "img": img,
                 "name": filename,
             }
-            img, square = endpoint(img_data)
-            env_map_default = process_image(square)
-            hdr = exposure2hdr(env_map_default)
+            imgs, squares = endpoint(img_data)
+            env_map_defaults = [process_image(sq) for sq in squares]
+            hdrs = [exposure2hdr(env_map) for env_map in env_map_defaults]
+            balls = [cropped_ball(sq) for sq in squares]
+            hdr_balls = [exposure2hdr(b.astype(np.float32)[..., :3] / 255.0) for b in balls]
+            
+            return_dict = {}
+            for (ev_value, img, square, env_map_default, hdr, ball, hdr_ball) in zip(
+                ["00", "25", "50"], imgs, squares, env_map_defaults, hdrs, balls, hdr_balls
+                ):
+                buffered = BytesIO()
+                img.save(buffered, format="PNG")
+                img_base64 = base64.b64encode(buffered.getvalue()).decode()
+                
+                buffered = BytesIO()
+                square.save(buffered, format="PNG")
+                square_base64 = base64.b64encode(buffered.getvalue()).decode()
+                
+                buffered = BytesIO()
+                skimage.io.imsave(buffered, skimage.img_as_ubyte(ball), format="PNG")
+                ball_base64 = base64.b64encode(buffered.getvalue()).decode()
 
-            buffered = BytesIO()
-            img.save(buffered, format="PNG")
-            img_base64 = base64.b64encode(buffered.getvalue()).decode()
+                buffered = BytesIO()
+                skimage.io.imsave(buffered, skimage.img_as_ubyte(env_map_default), format="png")
+                env_map_default_base64 = base64.b64encode(buffered.getvalue()).decode()
 
-            buffered = BytesIO()
-            square.save(buffered, format="PNG")
-            square_base64 = base64.b64encode(buffered.getvalue()).decode()
+                hdr_buffered = BytesIO()
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".exr") as tmp:
+                    ezexr.imwrite(tmp.name, hdr)
+                    tmp.seek(0)
+                    hdr_buffered.write(tmp.read())
+                os.unlink(tmp.name)
+                hdr_base64 = base64.b64encode(hdr_buffered.getvalue()).decode()
 
-            buffered = BytesIO()
-            skimage.io.imsave(buffered, skimage.img_as_ubyte(env_map_default), format="png")
-
-            # env_map_default.save(buffered, format="PNG")
-            env_map_default_base64 = base64.b64encode(buffered.getvalue()).decode()
-
-            hdr_buffered = BytesIO()
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".exr") as tmp:
-                ezexr.imwrite(tmp.name, hdr)
-                tmp.seek(0)
-                hdr_buffered.write(tmp.read())
-            os.unlink(tmp.name)  # delete the temp file
-            hdr_base64 = base64.b64encode(hdr_buffered.getvalue()).decode()
-
-            return {
-                "img": img_base64,
-                "square": square_base64,
-                "env_map_default": env_map_default_base64,
-                "hdr": hdr_base64
-            }
+                hdr_ball_buffer = BytesIO()
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".exr") as tmp:
+                    ezexr.imwrite(tmp.name, hdr_ball)
+                    tmp.seek(0)
+                    hdr_ball_buffer.write(tmp.read())
+                os.unlink(tmp.name)
+                hdr_ball_base64 = base64.b64encode(hdr_ball_buffer.getvalue()).decode()
+                return_dict.update(
+                    {
+                        f"img_{ev_value}": img_base64,
+                        f"square_{ev_value}": square_base64,
+                        f"env_map_default_{ev_value}": env_map_default_base64,
+                        f"hdr_{ev_value}": hdr_base64,
+                        f"ball_{ev_value}": ball_base64,
+                        f"hdr_ball_{ev_value}": hdr_ball_base64,
+                    }
+                )
+            return return_dict
         finally:
             upload_lock.release()
     else:

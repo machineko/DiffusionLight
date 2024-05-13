@@ -1,27 +1,19 @@
 import torch
+torch.set_grad_enabled(False)
+
 import random
 from relighting.inpainter import BallInpainter
-import time
 from relighting.mask_utils import MaskGenerator
 from relighting.ball_processor import (
     get_ideal_normal_ball,
-    crop_ball
 )
-from relighting.dataset import GeneralLoader
-from relighting.utils import name2hash
-import relighting.dist_utils as dist_util
 from relighting.argument import (
     SD_MODELS, 
     CONTROLNET_MODELS,
-    VAE_MODELS
 )
-from PIL import Image
-import skimage
-import ezexr
 import os
-from tqdm import tqdm
+import skimage
 import numpy as np
-
 CACHE_DIR = "./temp_inpaint_iterative"
 BALL_SIZE = 256
 BALL_DILATE = 20
@@ -245,32 +237,19 @@ def exposure2hdr(image):
     scaler = np.array([0.212671, 0.715160, 0.072169])
     ev = [float(i) for i in EV.split(",")]
     evs = [e for e in sorted(ev, reverse = True)]
-
-    # image0 = skimage.io.imread(os.path.join(args.input_dir, files[0]))[...,:3]
-    # image0 = skimage.img_as_float(image)
     image0_linear = np.power(image, GAMMA)
 
-    # read luminace for every image 
     luminances = []
     for i in range(len(evs)):
-        # load image
-        # image = skimage.io.imread(path)[...,:3]
-        # image = skimage.img_as_float(image)
-        
-        # apply gama correction
         linear_img = np.power(image, GAMMA)
         
-        # convert the brighness
         linear_img *= 1 / (2 ** evs[i])
         
-        # compute luminace
         lumi = linear_img @ scaler
         luminances.append(lumi)
         
-    # start from darkest image
     out_luminace = luminances[len(evs) - 1]
     for i in range(len(evs) - 1, 0, -1):
-        # compute mask
         maxval = 1 / (2 ** evs[i-1])
         p1 = np.clip((luminances[i-1] - 0.9 * maxval) / (0.1 * maxval), 0, 1)
         p2 = out_luminace > luminances[i-1]
@@ -284,60 +263,79 @@ def exposure2hdr(image):
 def endpoint(image_data: dict, denoising_step: int = 10, num_iter: int = 2, ball_per_iteration: int = 30, algorithm: str = "normal"):
     embedding_dict = interpolate_embedding(pipe)
     normal_ball, mask_ball = get_ideal_normal_ball(size=BALL_SIZE+BALL_DILATE)
-
+    output_images, square_images = [], []
+    print(embedding_dict.items())
 
     for ev, (prompt_embeds, pooled_prompt_embeds) in embedding_dict.items():
-            x, y, r = get_ball_location(image_data)
-            input_image = image_data["img"]
-            img_name = image_data["name"]
-            mask = mask_generator.generate_single(
-                input_image, mask_ball, 
-                x - (BALL_DILATE // 2),
-                y - (BALL_DILATE // 2),
-                r + BALL_DILATE
-            )
-            generator = torch.Generator().manual_seed(SEED)
-            kwargs = {
-                "prompt_embeds": prompt_embeds,
-                "pooled_prompt_embeds": pooled_prompt_embeds,
-                'negative_prompt': NEGATIVE_PROMPT,
-                'num_inference_steps': denoising_step,
-                'generator': generator,
-                'image': input_image,
-                'mask_image': mask,
-                'strength': 1.0,
-                'current_seed': SEED, # we still need seed in the pipeline!
-                'controlnet_conditioning_scale': CONTROL_SCALE,
-                'height': IMG_H,
-                'width': IMG_W,
-                'normal_ball': normal_ball,
-                'mask_ball': mask_ball,
-                'x': x,
-                'y': y,
-                'r': r,
-                'guidance_scale': GUIDANCE_SCALE,
-            }
-            cache_name = f"{img_name}_seed{SEED}"
+        print(ev)
+        x, y, r = get_ball_location(image_data)
+        input_image = image_data["img"]
+        img_name = image_data["name"]
+        mask = mask_generator.generate_single(
+            input_image, mask_ball, 
+            x - (BALL_DILATE // 2),
+            y - (BALL_DILATE // 2),
+            r + BALL_DILATE
+        )
+        generator = torch.Generator().manual_seed(SEED)
+        kwargs = {
+            "prompt_embeds": prompt_embeds,
+            "pooled_prompt_embeds": pooled_prompt_embeds,
+            'negative_prompt': NEGATIVE_PROMPT,
+            'num_inference_steps': denoising_step,
+            'generator': generator,
+            'image': input_image,
+            'mask_image': mask,
+            'strength': 1.0,
+            'current_seed': SEED, # we still need seed in the pipeline!
+            'controlnet_conditioning_scale': CONTROL_SCALE,
+            'height': IMG_H,
+            'width': IMG_W,
+            'normal_ball': normal_ball,
+            'mask_ball': mask_ball,
+            'x': x,
+            'y': y,
+            'r': r,
+            'guidance_scale': GUIDANCE_SCALE,
+        }
+        cache_name = f"{img_name}_seed{SEED}"
 
-            if algorithm == "normal":
-                output_image = pipe.inpaint(**kwargs).images[0]
-            elif algorithm == "iterative":
-                # This is still buggy
-                print("using inpainting iterative, this is going to take a while...")
-                kwargs.update({
-                    "strength": STRENGHT,
-                    "num_iteration": num_iter,
-                    "ball_per_iteration": ball_per_iteration,
-                    "agg_mode": "median",
-                    "save_intermediate": True,
-                    "cache_dir": os.path.join(CACHE_DIR, cache_name),
-                })
-                output_image = pipe.inpaint_iterative(**kwargs)
-            else:
-                raise NotImplementedError(f"Unknown algorithm {algorithm}")
-            square_image = output_image.crop((x, y, x+r, y+r))
-            return output_image, square_image
+        if algorithm == "normal":
+            output_image = pipe.inpaint(**kwargs).images[0]
+        elif algorithm == "iterative":
+            # This is still buggy
+            print("using inpainting iterative, this is going to take a while...")
+            kwargs.update({
+                "strength": STRENGHT,
+                "num_iteration": num_iter,
+                "ball_per_iteration": ball_per_iteration,
+                "agg_mode": "median",
+                "save_intermediate": True,
+                "cache_dir": os.path.join(CACHE_DIR, cache_name),
+            })
+            output_image = pipe.inpaint_iterative(**kwargs)
+        else:
+            raise NotImplementedError(f"Unknown algorithm {algorithm}")
+        square_image = output_image.crop((x, y, x+r, y+r))
+        output_images.append(output_image)
+        square_images.append(square_image)
+    return output_images, square_images
     
+def get_circle_mask():
+    x = torch.linspace(-1, 1, BALL_SIZE)
+    y = torch.linspace(1, -1, BALL_SIZE)
+    y, x = torch.meshgrid(y, x)
+    z = (1 - x**2 - y**2)
+    mask = z >= 0
+    return mask
+
+def cropped_ball(square):
+    mask = get_circle_mask().numpy()
+    square = np.array(square)
+    square[mask == 0] = 0
+    square = np.concatenate([square, (mask*255)[...,None]], axis=2)
+    square = square.astype(np.uint8)
+    return square
 
 # if __name__ == "__main__":
 #     img = Image.open("input/bed.png").resize(size = (1024, 1024), resample = Image.BICUBIC)
