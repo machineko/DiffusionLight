@@ -18,6 +18,7 @@ app = FastAPI()
 # Create a global lock
 upload_lock = threading.Lock()
 
+
 @app.post("/predict/")
 async def upload_image(image: UploadFile = File(...), image_name: Optional[str] = None):
     if upload_lock.acquire(blocking=False):
@@ -25,7 +26,7 @@ async def upload_image(image: UploadFile = File(...), image_name: Optional[str] 
             contents = await image.read()
             filename = image_name if image_name else image.filename
             image_data = BytesIO(contents)
-            img = Image.open(image_data).resize((1024,1024), Image.BICUBIC)
+            img = Image.open(image_data).resize((1024, 1024), Image.BICUBIC)
             img_data = {
                 "img": img,
                 "name": filename,
@@ -34,26 +35,36 @@ async def upload_image(image: UploadFile = File(...), image_name: Optional[str] 
             env_map_defaults = [process_image(sq) for sq in squares]
             hdrs = [exposure2hdr(env_map) for env_map in env_map_defaults]
             balls = [cropped_ball(sq) for sq in squares]
-            hdr_balls = [exposure2hdr(b.astype(np.float32)[..., :3] / 255.0) for b in balls]
-            
+            hdr_balls = [
+                exposure2hdr(b.astype(np.float32)[..., :3] / 255.0) for b in balls
+            ]
+
             return_dict = {}
-            for (ev_value, img, square, env_map_default, hdr, ball, hdr_ball) in zip(
-                ["00", "25", "50"], imgs, squares, env_map_defaults, hdrs, balls, hdr_balls
-                ):
+            for ev_value, img, square, env_map_default, hdr, ball, hdr_ball in zip(
+                ["00", "25", "50"],
+                imgs,
+                squares,
+                env_map_defaults,
+                hdrs,
+                balls,
+                hdr_balls,
+            ):
                 buffered = BytesIO()
                 img.save(buffered, format="PNG")
                 img_base64 = base64.b64encode(buffered.getvalue()).decode()
-                
+
                 buffered = BytesIO()
                 square.save(buffered, format="PNG")
                 square_base64 = base64.b64encode(buffered.getvalue()).decode()
-                
+
                 buffered = BytesIO()
                 skimage.io.imsave(buffered, skimage.img_as_ubyte(ball), format="PNG")
                 ball_base64 = base64.b64encode(buffered.getvalue()).decode()
 
                 buffered = BytesIO()
-                skimage.io.imsave(buffered, skimage.img_as_ubyte(env_map_default), format="png")
+                skimage.io.imsave(
+                    buffered, skimage.img_as_ubyte(env_map_default), format="png"
+                )
                 env_map_default_base64 = base64.b64encode(buffered.getvalue()).decode()
 
                 hdr_buffered = BytesIO()
@@ -85,7 +96,11 @@ async def upload_image(image: UploadFile = File(...), image_name: Optional[str] 
         finally:
             upload_lock.release()
     else:
-        raise HTTPException(status_code=429, detail="Another prediction is in progress. Please try again later.")
-    
+        raise HTTPException(
+            status_code=429,
+            detail="Another prediction is in progress. Please try again later.",
+        )
+
+
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8001)
