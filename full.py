@@ -278,17 +278,10 @@ def exposure2hdr(image):
         out_luminace = luminances[i-1] * (1-mask) + out_luminace * mask
         
     hdr_rgb = image0_linear * (out_luminace / (luminances[0] + 1e-10))[:, :, np.newaxis] 
-    # hdr2ldr = TonemapHDR(gamma=GAMMA, percentile=99, max_mapping=0.9)
     return hdr_rgb
-    # ldr_rgb, _, _ = hdr2ldr(hdr_rgb)
-    # bracket = []
-    # for s in 2 ** np.linspace(0, evs[-1], 10): #evs[-1] is -5
-    #     lumi = np.clip((s * hdr_rgb) ** (1/GAMMA), 0, 1)
-    #     bracket.append(lumi)
-    # bracket = np.concatenate(bracket, axis=1)
-    # return skimage.img_as_ubyte(bracket)
 
-def endpoint(image_data: dict, denoising_step: int = 30, num_iter: int = 2, ball_per_iteration: int = 30, algorithm: str = "normal"):
+
+def endpoint(image_data: dict, denoising_step: int = 10, num_iter: int = 2, ball_per_iteration: int = 30, algorithm: str = "normal"):
     embedding_dict = interpolate_embedding(pipe)
     normal_ball, mask_ball = get_ideal_normal_ball(size=BALL_SIZE+BALL_DILATE)
 
@@ -343,16 +336,15 @@ def endpoint(image_data: dict, denoising_step: int = 30, num_iter: int = 2, ball
             else:
                 raise NotImplementedError(f"Unknown algorithm {algorithm}")
             square_image = output_image.crop((x, y, x+r, y+r))
-            return img, square_image
+            return output_image, square_image
     
 
-if __name__ == "__main__":
-    img = Image.open("input/bed.png").resize(size = (1024, 1024), resample = Image.BICUBIC)
-    # array = np.asarray(img)
-    img_data = {
-        "img": img,
-        "name": "bed.png",
-    }
-    img, square = endpoint(img_data)
-    env_map_default = process_image(square)
-    hdr = exposure2hdr(env_map_default)
+# if __name__ == "__main__":
+#     img = Image.open("input/bed.png").resize(size = (1024, 1024), resample = Image.BICUBIC)
+#     img_data = {
+#         "img": img,
+#         "name": "bed.png",
+#     }
+#     img, square = endpoint(img_data)
+#     env_map_default = process_image(square)
+#     hdr = exposure2hdr(env_map_default)
