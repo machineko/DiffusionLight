@@ -26,7 +26,7 @@ async def upload_image(image: UploadFile = File(...), image_name: Optional[str] 
             contents = await image.read()
             filename = image_name if image_name else image.filename
             image_data = BytesIO(contents)
-            img = Image.open(image_data).resize((1024, 1024), Image.BICUBIC)
+            img = Image.open(image_data).resize((1024, 1024), Image.BICUBIC).convert("RGB")
             img_data = {
                 "img": img,
                 "name": filename,
