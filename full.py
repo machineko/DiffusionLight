@@ -257,19 +257,16 @@ def process_image(ball_img):
     )
     return env_map_default
 
-
-def exposure2hdr(image):
+def exposure2hdr(images):
     scaler = np.array([0.212671, 0.715160, 0.072169])
     ev = [float(i) for i in EV.split(",")]
     evs = [e for e in sorted(ev, reverse=True)]
-    image0_linear = np.power(image, GAMMA)
+    image0_linear = np.power(images[0], GAMMA)
 
     luminances = []
     for i in range(len(evs)):
-        linear_img = np.power(image, GAMMA)
-
+        linear_img = np.power(images[i], GAMMA)
         linear_img *= 1 / (2 ** evs[i])
-
         lumi = linear_img @ scaler
         luminances.append(lumi)
 
