@@ -12,9 +12,9 @@ import numpy as np
 import os
 import tempfile
 import torch
-
+import os
 app = FastAPI()
-
+PORT = os.environ.get('HDR_PORT', 8001)
 # Create a global lock
 upload_lock = threading.Lock()
 
@@ -100,4 +100,4 @@ async def upload_image(image: UploadFile = File(...), image_name: Optional[str] 
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+    uvicorn.run(app, host="0.0.0.0", port=int(PORT))
