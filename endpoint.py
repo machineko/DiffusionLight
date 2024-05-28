@@ -1,6 +1,9 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import Body, FastAPI, Form, UploadFile, File, HTTPException, WebSocket, Request
+
 from typing import Optional
 import threading
+
+from fastapi.responses import JSONResponse
 from full import endpoint, process_image, exposure2hdr, cropped_ball
 from PIL import Image
 from io import BytesIO
@@ -13,25 +16,44 @@ import os
 import tempfile
 import torch
 import os
+from fastapi.exceptions import RequestValidationError
+import json
 app = FastAPI()
 PORT = os.environ.get('HDR_PORT', 8001)
-# Create a global lock
 upload_lock = threading.Lock()
+from pydantic import BaseModel, ValidationError
 
+class DiffusionData(BaseModel):
+    denoising_step: int
+    num_iters: int
+    ball_per_iteration: int
+    image_name: str
+    algorithm: str
 
 @app.post("/predict/")
-async def upload_image(image: UploadFile = File(...), image_name: Optional[str] = None):
+async def upload_image(
+    data: str = Form(...),
+    image: UploadFile = File(...),
+):
     if upload_lock.acquire(blocking=False):
+        data = DiffusionData(**json.loads(data))
+        print(data)
         try:
             contents = await image.read()
-            filename = image_name if image_name else image.filename
+            filename = data.image_name if data.image_name else image.filename
             image_data = BytesIO(contents)
             img = Image.open(image_data).resize((1024, 1024), Image.BICUBIC).convert("RGB")
             img_data = {
                 "img": img,
                 "name": filename,
             }
-            imgs, squares = endpoint(img_data)
+            imgs, squares = endpoint(
+                img_data,
+                denoising_step = data.denoising_step,
+                num_iter = data.num_iters,
+                ball_per_iteration = data.ball_per_iteration,
+                algorithm = data.algorithm
+            )
             env_map_defaults = [process_image(sq) for sq in squares]
             hdr = exposure2hdr(env_map_defaults)
             balls = [cropped_ball(sq) for sq in squares]
@@ -100,4 +122,4 @@ async def upload_image(image: UploadFile = File(...), image_name: Optional[str] 
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=int(PORT))
+    uvicorn.run(app, host="0.0.0.0", port=int(PORT),  timeout_keep_alive=6000)
