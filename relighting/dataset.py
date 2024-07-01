@@ -107,7 +107,7 @@ class GeneralLoader(Dataset):
         
         if self.has_meta:
             # read metadata
-            TARGET_KEY = "chrome_mask256"
+            TARGET_KEY = "chrome_mask128"
             for path in paths:
                 with open(os.path.splitext(path)[0] + ".json") as f:
                     meta = json.load(f)

@@ -63,7 +63,7 @@ def custom_prepare_latents(
         return_image_latents=False,
         newx=0,
         newy=0,
-        newr=256,
+        newr=128,
         current_seed=None,
     ):
         shape = (batch_size, num_channels_latents, height // self.vae_scale_factor, width // self.vae_scale_factor)
@@ -105,7 +105,7 @@ def custom_prepare_latents(
 
                     ball_mask = torch.zeros(shape, device=device, dtype=bool)
                     top_left = (newy // self.vae_scale_factor, newx // self.vae_scale_factor)
-                    bottom_right = (top_left[0] + newr // self.vae_scale_factor, top_left[1] + newr // self.vae_scale_factor) # fixed ball size r = 256
+                    bottom_right = (top_left[0] + newr // self.vae_scale_factor, top_left[1] + newr // self.vae_scale_factor) 
                     ball_mask[:, :, top_left[0]:bottom_right[0], top_left[1]:bottom_right[1]] = True
 
                     noise = prev_noise.clone()

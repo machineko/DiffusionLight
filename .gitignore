@@ -1,3 +1,10 @@
 output/
 temp_inpaint_iterative/
 *.pyc
+*.exr
+*.png
+models/
+inp/
+.vscode/
+**.ipynb*
+**.7z*

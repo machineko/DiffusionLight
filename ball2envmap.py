@@ -20,7 +20,7 @@ def create_argparser():
     parser = argparse.ArgumentParser()
     parser.add_argument("--ball_dir", type=str, required=True ,help='directory that contain the image') 
     parser.add_argument("--envmap_dir", type=str, required=True ,help='directory to output environment map') #dataset name or directory 
-    parser.add_argument("--envmap_height", type=int, default=256, help="size of the environment map height in pixel (height)")
+    parser.add_argument("--envmap_height", type=int, default=128, help="size of the environment map height in pixel (height)")
     parser.add_argument("--scale", type=int, default=4, help="scale factor")
     parser.add_argument("--threads", type=int, default=8, help="num thread for pararell processing")
     return parser

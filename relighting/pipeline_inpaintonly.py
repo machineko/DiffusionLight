@@ -35,7 +35,7 @@ class CustomStableDiffusionInpaintPipeline(StableDiffusionInpaintPipeline):
         cross_attention_kwargs: Optional[Dict[str, Any]] = None,
         newx: int = 0,
         newy: int = 0,
-        newr: int = 256,
+        newr: int = 128,
         current_seed=0,
         use_noise_moving=True,
     ):
@@ -305,7 +305,7 @@ class CustomStableDiffusionXLInpaintPipeline(StableDiffusionXLInpaintPipeline):
         negative_aesthetic_score: float = 2.5,
         newx: int = 0,
         newy: int = 0,
-        newr: int = 256,
+        newr: int = 128,
         current_seed=0,
         use_noise_moving=True,
     ):

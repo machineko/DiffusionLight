@@ -42,7 +42,7 @@ async def upload_image(
             contents = await image.read()
             filename = data.image_name if data.image_name else image.filename
             image_data = BytesIO(contents)
-            img = Image.open(image_data).resize((1024, 1024), Image.BICUBIC).convert("RGB")
+            img = Image.open(image_data).resize((512, 512), Image.BICUBIC).convert("RGB")
             img_data = {
                 "img": img,
                 "name": filename,
@@ -122,4 +122,4 @@ async def upload_image(
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=int(PORT),  timeout_keep_alive=6000)
+    uvicorn.run(app, host="0.0.0.0", port=int(PORT),  timeout_keep_alive=160000)

@@ -32,7 +32,7 @@ class ControlSignalGenerator():
 
     def process_sd_depth(self, input_image, normal_ball=None, mask_ball=None, x=None, y=None, r=None):
         if getattr(self, 'depth_estimator', None) is None:
-            self.depth_estimator = transformers_pipeline("depth-estimation", device=self.device.index)
+            self.depth_estimator = transformers_pipeline("depth-estimation", device=self.device)
 
         control_image = self.depth_estimator(input_image)['depth']
         control_image = np.array(control_image)
@@ -45,7 +45,7 @@ class ControlSignalGenerator():
 
     def process_sdxl_depth(self, input_image, normal_ball=None, mask_ball=None, x=None, y=None, r=None):
         if getattr(self, 'depth_estimator', None) is None:
-            self.depth_estimator = transformers_pipeline("depth-estimation", model=DEPTH_ESTIMATOR, device=self.device.index)
+            self.depth_estimator = transformers_pipeline("depth-estimation", model=DEPTH_ESTIMATOR, device=self.device)
 
         control_image = estimate_scene_depth(input_image, depth_estimator=self.depth_estimator)
         xs = [x] if not isinstance(x, list) else x
@@ -137,7 +137,7 @@ class BallInpainter():
                 use_fixed_vae=True,
                 offload=False
     ):
-        vae = VAE_MODELS["sdxl"]
+        vae = VAE_MODELS["sdxl-turbo"] if use_fixed_vae else None
         vae = AutoencoderKL.from_pretrained(vae, torch_dtype=torch_dtype).to(device) if use_fixed_vae else None
         extra_kwargs = {"vae": vae} if vae is not None else {}
         
@@ -179,7 +179,7 @@ class BallInpainter():
         pipe.set_progress_bar_config(disable=True)
         pipe.scheduler = SAMPLERS[sampler].from_config(pipe.scheduler.config)
         
-        return BallInpainter(pipe, "sdxl", control_generator, disable_water_mask)
+        return BallInpainter(pipe, "sdxl-turbo", control_generator, disable_water_mask)
 
     # TODO: this method should be replaced by inpaint(), but we'll leave it here for now
     # otherwise, the existing experiment code will break down
@@ -191,8 +191,10 @@ class BallInpainter():
             return height, width
         if self.sd_arch == "sd":
             return (512, 512)
-        elif self.sd_arch == "sdxl":
-            return (1024, 1024)
+        # elif self.sd_arch == "sdxl":
+        #     return (1024, 1024)
+        elif self.sd_arch == "sdxl-turbo":
+            return (512, 512)
         else:
             raise NotImplementedError
 
@@ -320,7 +322,7 @@ class BallInpainter():
 
         x = extra_kwargs["x"]
         y = extra_kwargs["y"]
-        r = 256  if "r" not in extra_kwargs else extra_kwargs["r"]
+        r = 128  if "r" not in extra_kwargs else extra_kwargs["r"]
         _, mask_ball_for_crop = get_ideal_normal_ball(size=r)
         
         # generate initial average ball
@@ -398,7 +400,7 @@ class BallInpainter():
         
         if generator is None:
             generator = torch.Generator().manual_seed(0)
-
+        #    self.unet.config.addition_time_embed_dim * len(add_time_ids) + text_encoder_projection_dim
         output_image = self.pipeline(
             prompt=prompt,
             negative_prompt=negative_prompt,
@@ -412,7 +414,7 @@ class BallInpainter():
             strength=strength,
             newx = extra_kwargs["x"],
             newy = extra_kwargs["y"],
-            newr = getattr(extra_kwargs, "r", 256), # default to ball_size = 256
+            newr = getattr(extra_kwargs, "r", 128), # default to ball_size = 128
             current_seed=current_seed,
             cross_attention_kwargs=cross_attention_kwargs,
             prompt_embeds=prompt_embeds,

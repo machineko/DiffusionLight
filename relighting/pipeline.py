@@ -40,7 +40,7 @@ class CustomStableDiffusionControlNetInpaintPipeline(StableDiffusionControlNetIn
         control_guidance_end: Union[float, List[float]] = 1.0,
         newx: int = 0,
         newy: int = 0,
-        newr: int = 256,
+        newr: int = 128,
         current_seed=0,
         use_noise_moving=True,
     ):

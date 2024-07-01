@@ -35,7 +35,7 @@ from relighting.argument import (
 def create_argparser():    
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str, required=True ,help='directory that contain the image') #dataset name or directory 
-    parser.add_argument("--ball_size", type=int, default=256, help="size of the ball in pixel")
+    parser.add_argument("--ball_size", type=int, default=128, help="size of the ball in pixel")
     parser.add_argument("--ball_dilate", type=int, default=20, help="How much pixel to dilate the ball to make a sharper edge")
     parser.add_argument("--prompt", type=str, default="a perfect mirrored reflective chrome ball sphere") 
     parser.add_argument("--prompt_dark", type=str, default="a perfect black dark mirrored reflective chrome ball sphere") 
@@ -231,7 +231,9 @@ def main():
     if args.model_option == "sdxl" and args.img_height == 0 and args.img_width == 0:
         args.img_height = 1024
         args.img_width = 1024
-          
+    elif args.model_option == "sdxl-turbo" and args.img_height == 0 and args.img_width == 0:
+        args.img_height = 512
+        args.img_width = 512
     # load dataset
     dataset = GeneralLoader(
         root=args.dataset,

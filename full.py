@@ -17,12 +17,12 @@ import skimage
 import numpy as np
 
 CACHE_DIR = "./temp_inpaint_iterative"
-BALL_SIZE = 256
+BALL_SIZE = 128
 BALL_DILATE = 20
 PROMPT = "a perfect mirrored reflective chrome ball sphere"
 PROMPT_DARK = "a perfect black dark mirrored reflective chrome ball sphere"
 NEGATIVE_PROMPT = "matte, diffuse, flat, dull"
-IMG_H, IMG_W = 1024, 1024
+IMG_H, IMG_W = 512, 512
 CONTROL_SCALE = 0.5
 GUIDANCE_SCALE = 5.0
 SEED = random.choice(
@@ -36,17 +36,18 @@ SCALE = 4
 GAMMA = 2.4
 mask_generator = MaskGenerator()
 
-model, controlnet = SD_MODELS["sdxl"], CONTROLNET_MODELS["sdxl"]
+model, controlnet = "stabilityai/sdxl-turbo", "diffusers/controlnet-depth-sdxl-1.0-small"
 pipe = BallInpainter.from_sdxl(
     model=model,
     controlnet=controlnet,
     device=DEVICE,
     torch_dtype=torch.float16,
     offload=False,
+    use_fixed_vae=False
 )
 
 pipe.pipeline.load_lora_weights(
-    "models/ThisIsTheFinal-lora-hdr-continuous-largeT@900/0_-5/checkpoint-2500"
+    "models/checkpoint-14500"
 )
 pipe.pipeline.fuse_lora(lora_scale=0.75)
 enabled_lora = True
